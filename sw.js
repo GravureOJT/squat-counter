@@ -1,4 +1,4 @@
-const V='squat-261027.1';
+const V='squat-261029.1';
 const SHELL=['./','./index.html','./manifest.json','./icon-192.png','./icon-512.png','./icon-maskable-192.png','./icon-maskable-512.png'];
 self.addEventListener('install',e=>{
 e.waitUntil(caches.open(V).then(c=>c.addAll(SHELL.map(u=>new Request(u,{cache:'reload'})))).then(()=>self.skipWaiting()));

@@ -82,8 +82,8 @@ button.main{font-size:1.05rem}
 </style>
 </head>
 <body>
-<h1>スクワットカウンター <small style="font-size:.5em;opacity:.7">版番号 261027.1</small></h1>
-<div id="verTag">版番号 261027.1</div>
+<h1>スクワットカウンター <small style="font-size:.5em;opacity:.7">版番号 261029.1</small></h1>
+<div id="verTag">版番号 261029.1</div>
 
 <div class="top">
 <div class="left">
@@ -154,13 +154,14 @@ button.main{font-size:1.05rem}
 <ol>
 <li>スマホを床か台に立てかけ、<b>頭から足元まで全身</b>が映るように、2〜3mほど離して置きます。正面でも横向きでも数えられます（「ひざの角度」で数えるときは横向きがおすすめです）。</li>
 <li>「準備へ」を押します。はじめてのときは、カメラとマイクを「許可」します。</li>
-<li>まっすぐ立って、全身が映ったら「スタート」を押すか、「スタート」と言います。5から1まで数えたあと「はじめ」で数え始めます。<b>はじめの立った姿勢</b>が、基準の高さになります。</li>
+<li>まっすぐ立って、全身が映ると画面に「全身が映っています」と出ます。そうなったら「スタート」を押すか、「スタート」と言います。5から1まで数えたあと「はじめ」で数え始めます。<b>はじめの立った姿勢</b>が、基準の高さになります。</li>
 <li>画面の<b>白い線</b>が立った高さ、<b>緑の線</b>が「ここまで下がれば1回」の目安です。お尻（腰）が緑の線まで下がり、立った高さの近くまで戻ると1回数えます。</li>
 <li>少し動いて立つ位置がずれたときは、立っているうちに基準の高さが自動で少しずつついていきます。大きく動いたときは、いちど「ストップ」で止めて、立ち直してから「スタート」と言ってください。</li>
 <li>数えもれがあったら<b>「プラスいち」</b>（「たして」でも可）と言うと1回たします。数えすぎたら<b>「マイナスいち」</b>（「ひいて」でも可）で1回へらします。</li>
 <li>休むときは「ストップ」と言うか「一時停止」を押し、続けるときは「スタート」と言うか「再開」を押します。途中で「何回？」と聞くと、今の回数を声で教えます。終わるときは「おわり」と言うか「おわり」を押します。</li>
 <li>深く下がらなくても数えたいときは、「しゃがむ深さ」を「浅め」にします。逆に、もっと深く下がってから数えたいときは「深め」にします。</li>
 <li>「今回」はこの1回分、「今日の合計」は今日ぜんぶの回数です。</li>
+<li>声が小さいときは、スマホの下の端がふさがっていないか確かめてください（縦に立てるとスピーカーがふさがることがあります）。</li>
 </ol>
 </div>
 
@@ -177,6 +178,8 @@ normal: {down: 0.25, up: 0.10},
 shallow: {down: 0.15, up: 0.07},
 deep: {down: 0.38, up: 0.14}
 };
+var H_STILL_FRAMES = 12; // 立ち止まっているとみなすために見るコマ数
+var H_STILL_RANGE = 0.04; // そのあいだの腰の動きが、脚の長さのこの割合より小さければ「立ち止まっている」
 var H_REJECT = 0.90; // 腰がこれ以上（脚の長さ比）下がったら、しゃがみではなく座った・しゃがみこんだとみなして数えない
 
 /* 3点（腰・ひざ・足首）の、ひざの角度（度） */
@@ -213,29 +216,38 @@ hipY は画面の上下位置（ピクセル、下ほど大きい）、len は�
 立っている間は、基準の高さと脚の長さがゆっくりついていく */
 function makeHeightCounter(level){
 var th = HSENS[level] || HSENS.normal;
-var hy = null, len = null, base = null, ref = null, state = "up", below = 0, above = 0;
+var hy = null, len = null, base = null, ref = null, state = "up", below = 0, above = 0, hist = [];
 return {
 setLevel: function(l){ th = HSENS[l] || HSENS.normal; },
-reset: function(){ hy = null; len = null; base = null; ref = null; state = "up"; below = 0; above = 0; },
+reset: function(){ hy = null; len = null; base = null; ref = null; state = "up"; below = 0; above = 0; hist = []; },
 info: function(){ return {baseY: base, ref: ref, down: th.down}; },
 update: function(o){
 if (!(o.len > 20)) return {counted: false, drop: 0, state: state, down: th.down, baseY: base, ref: ref};
 hy = hy === null ? o.hipY : hy * 0.5 + o.hipY * 0.5;
 len = len === null ? o.len : len * 0.8 + o.len * 0.2;
 if (base === null) { base = hy; ref = len; }
+hist.push(hy);
+if (hist.length > H_STILL_FRAMES) hist.shift();
+var still = false;
+if (hist.length >= H_STILL_FRAMES) {
+var mn = hist[0], mx = hist[0];
+for (var i = 1; i < hist.length; i++) { if (hist[i] < mn) mn = hist[i]; if (hist[i] > mx) mx = hist[i]; }
+still = (mx - mn) < H_STILL_RANGE * ref;
+}
 var drop = (hy - base) / ref;
 var counted = false, rejected = false;
 if (state === "up") {
-// 立っているとき：基準の高さと脚の長さを、今の立ち姿に少しずつ合わせる
-if (drop < th.down * 0.5) {
-base = base + (hy - base) * 0.15;
+// 立ち止まっているときだけ：基準の高さと脚の長さを、今の立ち姿に少しずつ合わせる
+// （動いている最中に合わせると、ゆっくりしゃがんだときに基準も一緒に下がって数えられない）
+if (still && drop < th.down * 0.4) {
+base = base + (hy - base) * 0.1;
 ref = ref + (len - ref) * 0.05;
 drop = (hy - base) / ref;
 }
 if (drop >= th.down) { if (++below >= 3) { state = "down"; below = 0; } } else below = 0;
 } else {
 if (drop > H_REJECT) { // 座りこんだ・しゃがみこんだ：数えずに、今の高さを基準に戻す
-state = "up"; base = hy; ref = len; below = 0; above = 0; rejected = true;
+state = "up"; base = hy; ref = len; below = 0; above = 0; rejected = true; hist = [];
 } else if (drop <= th.up) {
 if (++above >= 2) { state = "up"; above = 0; counted = true; }
 } else above = 0;
@@ -278,6 +290,20 @@ if (/ストップ|すとっぷ|止めて|とめて|止まれ|一時停止|いち
 if (/スタート|すたーと|再開|さいかい|開始|かいし|はじめ|始め/.test(t)) return "start";
 return null;
 }
+/* 数字を日本語の読み（ひらがな）にする。声が「11」を英語で読まないように（0〜9999） */
+var JA_DIG = ["", "いち", "に", "さん", "よん", "ご", "ろく", "なな", "はち", "きゅう"];
+function jaNum(n){
+n = Math.floor(n);
+if (!(n >= 0) || n > 9999) return String(n);
+if (n === 0) return "ぜろ";
+var th = Math.floor(n / 1000), h = Math.floor(n / 100) % 10, t = Math.floor(n / 10) % 10, o = n % 10, out = "";
+if (th) out += th === 1 ? "せん" : th === 3 ? "さんぜん" : th === 8 ? "はっせん" : JA_DIG[th] + "せん";
+if (h) out += h === 1 ? "ひゃく" : h === 3 ? "さんびゃく" : h === 6 ? "ろっぴゃく" : h === 8 ? "はっぴゃく" : JA_DIG[h] + "ひゃく";
+if (t) out += t === 1 ? "じゅう" : JA_DIG[t] + "じゅう";
+if (o) out += JA_DIG[o];
+return out;
+}
+function jaDigits(s){ return String(s).replace(/\d+/g, function(m){ return jaNum(parseInt(m, 10)); }); }
 /*COUNTER-END*/
 </script>
 
@@ -302,15 +328,27 @@ var phase = "idle"; // idle / waiting / countdown / counting / paused
 var runId = 0; // スタート・ストップのたびに増やし、古い処理を止める
 var busy = false; // じゅんび中
 var holdUntil = 0; // この時刻までは案内文を書きかえない
+var waitState = ""; // 「スタート」を待っている間の、画面の案内（同じ文を何度も書きかえない）
 
 function setLevelAll(){ var l = $("depth").value; acounter.setLevel(l); hcounter.setLevel(l); }
 function resetCounters(){ acounter.reset(); hcounter.reset(); locker.reset(); setLevelAll(); }
 
 function msg(text, kind){ msgEl.textContent = text; msgEl.className = kind || ""; }
+// 「スタート」を待っている間、全身が映っているかを大きな文字で知らせる
+function waitMsg(ok, text){
+if (phase !== "waiting") return;
+var k = (ok ? "1" : "0") + text;
+if (waitState === k) return;
+waitState = k;
+msg(text, ok ? "good" : "bad");
+}
 // 数えている間だけ案内を出す（カウントダウン中などは文を守る）
 function hint(text, kind){
 if (phase === "counting") { if (performance.now() >= holdUntil) msg(text, kind); }
-else infoEl.textContent = text;
+else {
+infoEl.textContent = text;
+if (phase === "waiting" && kind === "bad") waitMsg(false, text);
+}
 }
 function wait(ms, id){
 return new Promise(function(res){
@@ -364,11 +402,19 @@ function todayTotal(){ return loadLog()[todayKey()] || 0; }
 var muteUntil = 0; // アプリ自身の声を命令と聞き違えないため
 function speakText(t){
 if ($("voice").value !== "on" || !("speechSynthesis" in window)) return;
-muteUntil = performance.now() + 900 + String(t).length * 220;
+// 数字は日本語の読みにして読ませる（「11」を英語で読まないように）
+var s = jaDigits(t);
+muteUntil = performance.now() + 900 + s.length * 220;
 try {
 speechSynthesis.cancel();
-var u = new SpeechSynthesisUtterance(String(t));
+var u = new SpeechSynthesisUtterance(s);
 u.lang = "ja-JP"; u.rate = 1.15;
+try {
+var vs = speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
+for (var i = 0; i < vs.length; i++) {
+if (/^ja/i.test(String(vs[i].lang).replace("_", "-"))) { u.voice = vs[i]; break; }
+}
+} catch(e){}
 speechSynthesis.speak(u);
 } catch(e){}
 }
@@ -442,7 +488,7 @@ startBtn.disabled = false; busy = false;
 async function prepare(){
 if (busy) return;
 if (!(await boot())) return;
-phase = "waiting";
+phase = "waiting"; waitState = "";
 startBtn.textContent = "スタート"; startBtn.classList.remove("stop");
 quitBtn.hidden = false;
 if (voiceWanted() && startListening()) {
@@ -657,6 +703,7 @@ hline(inf.baseY + inf.down * inf.ref, "#4cd08a", 4); // ここまで下がれば
 text = "しずみ " + Math.max(0, Math.round(r.drop * 100)) + "％（目安 " + Math.round(r.down * 100) + "％）";
 } else {
 text = "全身が映っています";
+waitMsg(true, "全身が映っています。「スタート」を押してください");
 }
 } else {
 var key = locker.update({
@@ -677,6 +724,7 @@ r = acounter.update(ang);
 text = "ひざ " + Math.round(r.angle) + "°（目安 " + Math.round(r.down) + "°以下）";
 } else {
 text = "ひざ " + Math.round(ang) + "°";
+waitMsg(true, "腰・ひざ・足首が映っています。「スタート」を押してください");
 }
 }
 if (r && r.counted) onCounted();
